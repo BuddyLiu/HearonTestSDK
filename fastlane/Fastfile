@@ -125,6 +125,8 @@ platform :ios do
     UI.success("\n🎉 构建成功！")
     UI.success("📦 最终Framework路径：#{final_framework_path}")
     
+    open final_framework_path
+    
     # 输出架构信息
     arch_info = `lipo -info #{framework_binary} 2>&1`.strip
     if arch_info.include?("arm64")
