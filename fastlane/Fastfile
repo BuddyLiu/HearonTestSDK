@@ -1,138 +1,189 @@
 # Fastfile
 require 'fileutils'
+require 'json'
 
 default_platform(:ios)
 
 platform :ios do
   lane :build_framework do |options|
-    # 1. 接收密钥
-    secret_key = options[:secret_key]
-    unless secret_key
-      UI.user_error!("❌ 请传入密钥：fastlane build_framework secret_key:\"你的密钥\"")
+    # 1. 接收并解析 JSON 格式密钥，获取所有 vfp 字段（仅这一步在循环外）
+    secret_json_str = options[:build_users]
+    unless secret_json_str
+      UI.user_error!("❌ 请传入 JSON 格式密钥：fastlane build_framework build_users:\"{你的JSON字符串}\"")
     end
 
-    # 2. 路径配置
-    secret_file_path = File.expand_path("../../HearonTestSDK/HearonTestSDK/SecretKey.swift", __FILE__)
-    derived_framework_path = "/Users/bo.liu/Library/Developer/Xcode/DerivedData/HearonTestSDK-gsuroojostvaokczdsdxudxwdbif/Build/Products/Debug-iphoneos/HearonTestSDK.framework"
-    build_output_dir = "./build/device"
-    final_framework_path = "#{build_output_dir}/HearonTestSDK.framework"
-
-    # 3. 生成密钥文件
+    # 解析 JSON 并提取所有 vfp 字段
     begin
-      secret_content = "// 自动生成，请勿修改\ninternal let CustomFrameworkSecretKey = \"#{secret_key}\""
-      FileUtils.mkdir_p(File.dirname(secret_file_path))
-      File.write(secret_file_path, secret_content)
-      UI.success("✅ 密钥文件生成：#{secret_file_path}")
-    rescue => e
-      UI.user_error!("❌ 生成密钥文件失败：#{e.message}")
+      secret_json = JSON.parse(secret_json_str)
+      unless secret_json.key?("data") && secret_json["data"].is_a?(Array) && !secret_json["data"].empty?
+        UI.user_error!("❌ JSON 格式错误：缺少有效的 data 数组")
+      end
+
+      # 收集所有有效的 vfp 字段
+      vfp_list = secret_json["data"].each_with_index.map do |item, index|
+        vfp = item["vfp"]&.to_s&.strip
+        unless vfp && !vfp.empty?
+          UI.user_error!("❌ JSON 格式错误：data 数组第 #{index + 1} 个元素缺少有效的 vfp 字段")
+        end
+        vfp
+      end
+
+      UI.success("✅ 成功解析 JSON 密钥，共获取 #{vfp_list.size} 个 vfp 字段，开始循环处理...")
+    rescue JSON::ParserError => e
+      UI.user_error!("❌ JSON 解析失败：#{e.message}")
     end
 
-    # 4. 清理之前的构建
-    begin
-      UI.message("🧹 清理之前的构建...")
-      clean_command = <<~CMD
-        xcodebuild clean \
-        -project "../HearonTestSDK.xcodeproj" \
-        -scheme HearonTestSDK \
-        -configuration Debug
-      CMD
-      system(clean_command)
-      UI.success("✅ 清理完成")
-    rescue => e
-      UI.message("⚠️ 清理过程中出现警告：#{e.message}")
-    end
+    # 基础路径（循环外定义公共根目录）
+    base_work_dir = "./build_multi_vfp"
+    FileUtils.mkdir_p(base_work_dir)
+    UI.message("📂 所有构建的根目录：#{base_work_dir}")
 
-    # 5. 编译真机Framework - 修复版本
-    begin
+    # 2. 遍历每个 vfp，将步骤2-5全部纳入循环
+    vfp_list.each_with_index do |current_vfp, index|
+      UI.message("\n\n==================================================")
+      UI.message("🔄 开始处理第 #{index + 1}/#{vfp_list.size} 个 vfp（部分隐藏：#{current_vfp[0, 6]}...）")
+      UI.message("==================================================\n")
+
+      # --------------------------
+      # 步骤2：当前 vfp 的路径配置（循环内定义，完全隔离）
+      # --------------------------
+      # 当前 vfp 的独立工作目录（所有文件均在此目录，避免交叉污染）
+      current_work_dir = "#{base_work_dir}/vfp_#{index + 1}"
+      FileUtils.mkdir_p(current_work_dir)
+
+      # 当前 vfp 的密钥文件路径（独立路径，避免覆盖）
+      secret_file_path = "#{current_work_dir}/SecretKey.swift"
+      
+      # 当前 vfp 的编译输出目录
+      current_build_output = "#{current_work_dir}/framework"
+      FileUtils.mkdir_p(current_build_output)
+      
+      # 当前 vfp 的最终 Framework 路径
+      current_final_framework = "#{current_build_output}/HearonTestSDK.framework"
+      
+      # 项目路径（固定，可共享）
       project_path = "../HearonTestSDK.xcodeproj"
       unless File.exist?(project_path)
-        raise "项目文件不存在：#{File.expand_path(project_path)}"
+        UI.error("❌ 项目文件不存在，跳过当前 vfp 处理")
+        next
       end
 
-      UI.message("🔨 开始编译Framework...")
+      begin
+        # --------------------------
+        # 步骤3：生成当前 vfp 的密钥文件（循环内执行）
+        # --------------------------
+        UI.message("🔑 生成当前 vfp 的密钥文件...")
+        secret_content = <<~SWIFT
+          // 自动生成，对应第 #{index + 1} 个 vfp
+          internal let CustomFrameworkSecretKey = "#{current_vfp}"
+        SWIFT
+        File.write(secret_file_path, secret_content)
+        UI.success("✅ 密钥文件生成：#{secret_file_path}")
 
-      # 方案1: 使用 archive 命令（推荐）
-      archive_command = <<~CMD
-        xcodebuild archive \
-        -project "#{project_path}" \
-        -scheme HearonTestSDK \
-        -configuration Debug \
-        -sdk iphoneos \
-        -archivePath "./build/HearonTestSDK-iphoneos.xcarchive" \
-        SKIP_INSTALL=NO \
-        BUILD_LIBRARY_FOR_DISTRIBUTION=YES
-      CMD
-
-      UI.message("执行编译命令：#{archive_command}")
-      
-      # 使用 fastlane 的 sh 命令来获得更好的输出处理
-      sh(archive_command)
-      
-      # 检查archive产物
-      archive_framework_path = "./build/HearonTestSDK-iphoneos.xcarchive/Products/Library/Frameworks/HearonTestSDK.framework"
-      if File.exist?(archive_framework_path)
-        UI.success("✅ Archive 编译成功")
-        derived_framework_path = archive_framework_path
-      else
-        # 方案2: 回退到 build 命令
-        UI.message("📦 尝试使用 build 命令...")
-        build_command = <<~CMD
-          xcodebuild build \
+        # --------------------------
+        # 步骤4：清理当前 vfp 的构建缓存（循环内执行，避免残留）
+        # --------------------------
+        UI.message("🧹 清理当前 vfp 的构建缓存...")
+        clean_command = <<~CMD
+          xcodebuild clean \
           -project "#{project_path}" \
           -scheme HearonTestSDK \
-          -configuration Debug \
-          -sdk iphoneos \
-          -arch arm64 \
-          -derivedDataPath "./build/DerivedData" \
-          ONLY_ACTIVE_ARCH=NO \
-          CODE_SIGNING_ALLOWED=NO
+          -configuration Debug
         CMD
-        
-        sh(build_command)
-        
-        # 检查DerivedData中的产物
-        derived_framework_path = "./build/DerivedData/Build/Products/Debug-iphoneos/HearonTestSDK.framework"
-        unless File.exist?(derived_framework_path)
-          raise "编译失败，未找到Framework文件"
+        # 执行清理命令，输出日志到当前工作目录
+        system("#{clean_command} > #{current_work_dir}/clean_log.txt 2>&1")
+        UI.success("✅ 清理完成（日志：#{current_work_dir}/clean_log.txt）")
+
+        # --------------------------
+        # 步骤5：编译当前 vfp 的真机Framework（循环内执行，完全独立）
+        # --------------------------
+        UI.message("🔨 开始编译当前 vfp 的 Framework...")
+        derived_framework_path = ""
+
+        # 方案1：优先使用 archive（输出到当前工作目录）
+        archive_path = "#{current_work_dir}/HearonTestSDK.xcarchive"
+        archive_command = <<~CMD
+          xcodebuild archive \
+          -project "#{project_path}" \
+          -scheme HearonTestSDK \
+          -configuration Release \
+          -sdk iphoneos \
+          -archivePath "#{archive_path}" \
+          SKIP_INSTALL=NO \
+          BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+          // 强制引用当前 vfp 的密钥文件（若项目依赖此路径）
+          GCC_PREPROCESSOR_DEFINITIONS="SECRET_KEY_FILE=#{secret_file_path}"
+        CMD
+        # 执行 archive 命令，日志输出到当前工作目录
+        system("#{archive_command} > #{current_work_dir}/archive_log.txt 2>&1")
+
+        # 检查 archive 产物
+        archive_framework_path = "#{archive_path}/Products/Library/Frameworks/HearonTestSDK.framework"
+        if File.exist?(archive_framework_path)
+          UI.success("✅ Archive 编译成功")
+          derived_framework_path = archive_framework_path
+        else
+          # 方案2：回退到 build 命令（输出到当前工作目录）
+          UI.message("📦 archive 产物未找到，尝试 build 命令...")
+          derived_data_path = "#{current_work_dir}/DerivedData"
+          build_command = <<~CMD
+            xcodebuild build \
+            -project "#{project_path}" \
+            -scheme HearonTestSDK \
+            -configuration Debug \
+            -sdk iphoneos \
+            -arch arm64 \
+            -derivedDataPath "#{derived_data_path}" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            // 强制引用当前 vfp 的密钥文件
+            GCC_PREPROCESSOR_DEFINITIONS="SECRET_KEY_FILE=#{secret_file_path}"
+          CMD
+          system("#{build_command} > #{current_work_dir}/build_log.txt 2>&1")
+
+          # 检查 build 产物
+          derived_framework_path = "#{derived_data_path}/Build/Products/Debug-iphoneos/HearonTestSDK.framework"
+          unless File.exist?(derived_framework_path)
+            raise "build 产物未找到（日志：#{current_work_dir}/build_log.txt）"
+          end
+          UI.success("✅ Build 编译成功")
         end
-        UI.success("✅ Build 编译成功")
+
+        # 复制当前 vfp 的 Framework 到输出目录
+        FileUtils.rm_rf(current_final_framework) if File.exist?(current_final_framework)
+        FileUtils.cp_r(derived_framework_path, current_final_framework)
+        UI.success("📦 第 #{index + 1} 个 Framework 已保存到：#{current_final_framework}")
+
+        # 验证二进制文件
+        framework_binary = "#{current_final_framework}/HearonTestSDK"
+        unless File.exist?(framework_binary)
+          raise "Framework 内无二进制文件：#{framework_binary}"
+        end
+
+        # 输出架构信息
+        arch_info = `lipo -info #{framework_binary} 2>&1`.strip
+        if arch_info.include?("arm64")
+          UI.success("📊 架构信息：#{arch_info}")
+        else
+          UI.important("⚠️ 架构信息异常：#{arch_info}")
+        end
+
+      rescue => e
+        # 单个 vfp 处理失败，记录错误后继续下一个
+        UI.error("❌ 第 #{index + 1} 个 vfp 处理失败：#{e.message}")
+        next
       end
-      
-    rescue => e
+
+      # 清理当前 vfp 的临时密钥文件（成功后）
       File.delete(secret_file_path) if File.exist?(secret_file_path)
-      UI.user_error!("❌ 编译失败：#{e.message}")
+      UI.success("\n✅ 第 #{index + 1} 个 vfp 处理完成")
     end
 
-    # 6. 验证并复制Framework
-    unless File.exist?(derived_framework_path)
-      File.delete(secret_file_path) if File.exist?(secret_file_path)
-      UI.user_error!("❌ Framework路径不存在：#{derived_framework_path}")
-    end
-
-    FileUtils.mkdir_p(build_output_dir)
-    FileUtils.rm_rf(final_framework_path) if File.exist?(final_framework_path)
-    FileUtils.cp_r(derived_framework_path, build_output_dir)
-    UI.success("📋 已复制Framework到输出目录")
-
-    # 7. 验证二进制并输出结果
-    framework_binary = "#{final_framework_path}/HearonTestSDK"
-    unless File.exist?(framework_binary)
-      File.delete(secret_file_path) if File.exist?(secret_file_path)
-      UI.user_error!("❌ Framework内无二进制文件：#{framework_binary}")
-    end
-
-    File.delete(secret_file_path) if File.exist?(secret_file_path)
-    UI.success("\n🎉 构建成功！")
-    UI.success("📦 最终Framework路径：#{final_framework_path}")
-    
-    open #{final_framework_path}
-    
-    # 输出架构信息
-    arch_info = `lipo -info #{framework_binary} 2>&1`.strip
-    if arch_info.include?("arm64")
-      UI.success("📊 架构信息：#{arch_info}")
-    else
-      UI.important("⚠️ 架构信息异常：#{arch_info}")
+    # 所有 vfp 处理完成后汇总
+    UI.success("\n🎉 所有 vfp 处理完毕！")
+    UI.success("📁 所有产物路径：")
+    vfp_list.each_with_index do |_, index|
+      UI.message("   - 第 #{index + 1} 个：#{base_work_dir}/vfp_#{index + 1}/framework/HearonTestSDK.framework")
     end
   end
 end
