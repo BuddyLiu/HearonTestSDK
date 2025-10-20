@@ -6,7 +6,6 @@
 //
 
 import Foundation
-
 // SDKTool.swift
 public class SDKTool {
     // 公共方法（外部可调用）

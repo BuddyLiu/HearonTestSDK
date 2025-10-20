@@ -1,0 +1,130 @@
+{
+  "ABIRoot": {
+    "kind": "Root",
+    "name": "HearonTestSDK",
+    "printedName": "HearonTestSDK",
+    "children": [
+      {
+        "kind": "Var",
+        "name": "CustomFrameworkSecretKey",
+        "printedName": "CustomFrameworkSecretKey",
+        "children": [
+          {
+            "kind": "TypeNominal",
+            "name": "String",
+            "printedName": "Swift.String",
+            "usr": "s:SS"
+          }
+        ],
+        "declKind": "Var",
+        "usr": "s:13HearonTestSDK24CustomFrameworkSecretKeySSvp",
+        "mangledName": "$s13HearonTestSDK24CustomFrameworkSecretKeySSvp",
+        "moduleName": "HearonTestSDK",
+        "declAttributes": [
+          "HasInitialValue",
+          "HasStorage",
+          "AccessControl",
+          "RawDocComment"
+        ],
+        "isLet": true,
+        "hasStorage": true
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "HearonTestSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "SDKTool",
+        "printedName": "SDKTool",
+        "children": [
+          {
+            "kind": "Function",
+            "name": "basicFunction",
+            "printedName": "basicFunction()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "String",
+                "printedName": "Swift.String",
+                "usr": "s:SS"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:13HearonTestSDK7SDKToolC13basicFunctionSSyFZ",
+            "mangledName": "$s13HearonTestSDK7SDKToolC13basicFunctionSSyFZ",
+            "moduleName": "HearonTestSDK",
+            "static": true,
+            "declAttributes": [
+              "Final",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Constructor",
+            "name": "init",
+            "printedName": "init()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "SDKTool",
+                "printedName": "HearonTestSDK.SDKTool",
+                "usr": "s:13HearonTestSDK7SDKToolC"
+              }
+            ],
+            "declKind": "Constructor",
+            "usr": "s:13HearonTestSDK7SDKToolCACycfc",
+            "mangledName": "$s13HearonTestSDK7SDKToolCACycfc",
+            "moduleName": "HearonTestSDK",
+            "implicit": true,
+            "init_kind": "Designated"
+          }
+        ],
+        "declKind": "Class",
+        "usr": "s:13HearonTestSDK7SDKToolC",
+        "mangledName": "$s13HearonTestSDK7SDKToolC",
+        "moduleName": "HearonTestSDK",
+        "isOpen": true,
+        "declAttributes": [
+          "AccessControl",
+          "RawDocComment"
+        ],
+        "hasMissingDesignatedInitializers": true,
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          }
+        ]
+      }
+    ],
+    "json_format_version": 8
+  },
+  "ConstValues": [
+    {
+      "filePath": "\/Users\/bo.liu\/Downloads\/10\/1020\/Hearon\/HearonTestSDK\/HearonTestSDK\/HearonTestSDK\/SecretKey.swift",
+      "kind": "StringLiteral",
+      "offset": 71,
+      "length": 9,
+      "value": "\"sss1122\""
+    }
+  ]
+}
