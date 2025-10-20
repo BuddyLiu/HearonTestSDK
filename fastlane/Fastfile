@@ -111,7 +111,6 @@ platform :ios do
           -archivePath "#{archive_path}" \
           SKIP_INSTALL=NO \
           BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-          // 强制引用当前 vfp 的密钥文件（若项目依赖此路径）
           GCC_PREPROCESSOR_DEFINITIONS="SECRET_KEY_FILE=#{secret_file_path}"
         CMD
         # 执行 archive 命令，日志输出到当前工作目录
