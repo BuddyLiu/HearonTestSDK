@@ -1,6 +1,7 @@
 # Fastfile
 require 'fileutils'
 require 'json'
+require 'net/http'
 
 default_platform(:ios)
 
@@ -19,16 +20,29 @@ platform :ios do
         UI.user_error!("❌ JSON 格式错误：缺少有效的 data 数组")
       end
 
-      # 收集所有有效的 vfp 字段
-      vfp_list = secret_json["data"].each_with_index.map do |item, index|
+      # 收集所有有效的 vfp 字段和对应的用户信息
+      user_data_list = secret_json["data"].each_with_index.map do |item, index|
         vfp = item["vfp"]&.to_s&.strip
+        account_id = item["id"]&.to_s&.strip
+        account_name = item["accountName"]&.to_s&.strip
+        channel = item["channel"]&.to_s&.strip
+        
         unless vfp && !vfp.empty?
           UI.user_error!("❌ JSON 格式错误：data 数组第 #{index + 1} 个元素缺少有效的 vfp 字段")
         end
-        vfp
+        unless account_id && !account_id.empty?
+          UI.user_error!("❌ JSON 格式错误：data 数组第 #{index + 1} 个元素缺少有效的 id 字段")
+        end
+        
+        {
+          vfp: vfp,
+          account_id: account_id,
+          account_name: account_name || "未知用户",
+          channel: channel || "default_channel"
+        }
       end
 
-      UI.success("✅ 成功解析 JSON 密钥，共获取 #{vfp_list.size} 个 vfp 字段，开始循环处理...")
+      UI.success("✅ 成功解析 JSON 密钥，共获取 #{user_data_list.size} 个用户数据，开始循环处理...")
     rescue JSON::ParserError => e
       UI.user_error!("❌ JSON 解析失败：#{e.message}")
     end
@@ -38,10 +52,11 @@ platform :ios do
     FileUtils.mkdir_p(base_work_dir)
     UI.message("📂 所有构建的根目录：#{base_work_dir}")
 
-    # 2. 遍历每个 vfp，将步骤2-5全部纳入循环
-    vfp_list.each_with_index do |current_vfp, index|
+    # 2. 遍历每个用户数据，将步骤2-7全部纳入循环
+    user_data_list.each_with_index do |user_data, index|
+      current_vfp = user_data[:vfp]
       UI.message("\n\n==================================================")
-      UI.message("🔄 开始处理第 #{index + 1}/#{vfp_list.size} 个 vfp（部分隐藏：#{current_vfp[0, 6]}...）")
+      UI.message("🔄 开始处理第 #{index + 1}/#{user_data_list.size} 个用户：#{user_data[:account_name]}（#{current_vfp[0, 6]}...）")
       UI.message("==================================================\n")
 
       # --------------------------
@@ -64,7 +79,7 @@ platform :ios do
       # 项目路径（固定，可共享）
       project_path = "../HearonTestSDK.xcodeproj"
       unless File.exist?(project_path)
-        UI.error("❌ 项目文件不存在，跳过当前 vfp 处理")
+        UI.error("❌ 项目文件不存在，跳过当前用户处理")
         next
       end
 
@@ -74,7 +89,7 @@ platform :ios do
         # --------------------------
         UI.message("🔑 生成当前 vfp 的密钥文件...")
         secret_content = <<~SWIFT
-          // 自动生成，对应第 #{index + 1} 个 vfp
+          // 自动生成，对应第 #{index + 1} 个用户：#{user_data[:account_name]}
           internal let CustomFrameworkSecretKey = "#{current_vfp}"
         SWIFT
         File.write(secret_file_path, secret_content)
@@ -135,7 +150,6 @@ platform :ios do
             -derivedDataPath "#{derived_data_path}" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
-            // 强制引用当前 vfp 的密钥文件
             GCC_PREPROCESSOR_DEFINITIONS="SECRET_KEY_FILE=#{secret_file_path}"
           CMD
           system("#{build_command} > #{current_work_dir}/build_log.txt 2>&1")
@@ -167,22 +181,185 @@ platform :ios do
           UI.important("⚠️ 架构信息异常：#{arch_info}")
         end
 
+        # --------------------------
+        # 步骤6：压缩 Framework 并上传
+        # --------------------------
+        UI.message("📦 开始压缩 Framework...")
+        
+        # 压缩文件路径
+        zip_file_path = "#{current_work_dir}/framework/HearonTestSDK.zip"
+        
+        UI.message("压缩路径: #{zip_file_path}")
+
+        # 修复压缩命令：不使用 cd，直接指定完整路径
+        zip_command = "ditto -c -k --sequesterRsrc --keepParent \"#{current_final_framework}\" \"#{zip_file_path}\""
+        UI.message("压缩命令: #{zip_command}")
+
+        zip_success = system("#{zip_command} > \"#{current_work_dir}/zip_log.txt\" 2>&1")
+        
+        unless zip_success && File.exist?(zip_file_path)
+          # 读取压缩日志以便更好的错误信息
+          zip_log_content = File.exist?("#{current_work_dir}/zip_log.txt") ? File.read("#{current_work_dir}/zip_log.txt") : "无日志文件"
+          raise "Framework 压缩失败（日志：#{zip_log_content}）"
+        end
+        
+        zip_file_size = File.size(zip_file_path)
+        UI.success("✅ 压缩完成：#{zip_file_path} (#{zip_file_size / 1024 / 1024} MB)")
+
+        # # 上传文件
+        UI.message("🌐 开始上传文件到服务器...")
+        upload_result = upload_file(zip_file_path)
+        
+        unless upload_result && upload_result["code"] == 0 && upload_result["data"]["list"][0]["file_id"] && upload_result["data"]["list"][0]["upload_file_url"]
+          raise "文件上传失败：#{upload_result}"
+        end
+        
+        file_id = upload_result["data"]["list"][0]["file_id"]
+        file_url = upload_result["data"]["list"][0]["upload_file_url"]
+        UI.success("✅ 文件上传成功")
+        UI.message("File ID: #{file_id}")
+        UI.message("File URL: #{file_url}")
+
+        # --------------------------
+        # 步骤7：调用保存关系接口
+        # --------------------------
+        UI.message("💾 开始保存包关系信息...")
+        
+        save_params = {
+          account_id: user_data[:account_id],
+          account_name: user_data[:account_name],
+          pkg_id: file_id,
+          pkg_url: file_url,
+          pkg_version: "1.0", # 固定版本号
+          channel: user_data[:channel]
+        }
+        UI.message("调用参数：#{save_params}")
+        save_result = save_account_pkg_relation(save_params)
+        
+        if save_result && save_result["data"]["succTag"]
+          UI.success("✅ 包关系保存成功")
+        else
+          error_msg = save_result ? save_result["data"]["msg"] || save_result.to_s : "未知错误"
+          UI.error("❌ 包关系保存失败：#{error_msg}")
+        end
+
       rescue => e
-        # 单个 vfp 处理失败，记录错误后继续下一个
-        UI.error("❌ 第 #{index + 1} 个 vfp 处理失败：#{e.message}")
+        # 单个用户处理失败，记录错误后继续下一个
+        UI.error("❌ 第 #{index + 1} 个用户处理失败：#{e.message}")
+        UI.error("Backtrace: #{e.backtrace.join("\n")}") if e.backtrace
         next
+      ensure
+        # 清理当前 vfp 的临时密钥文件（无论成功失败）
+        File.delete(secret_file_path) if File.exist?(secret_file_path)
       end
 
-      # 清理当前 vfp 的临时密钥文件（成功后）
-      File.delete(secret_file_path) if File.exist?(secret_file_path)
-      UI.success("\n✅ 第 #{index + 1} 个 vfp 处理完成")
+      UI.success("\n✅ 第 #{index + 1} 个用户 #{user_data[:account_name]} 处理完成")
     end
 
-    # 所有 vfp 处理完成后汇总
-    UI.success("\n🎉 所有 vfp 处理完毕！")
+    # 所有用户处理完成后汇总
+    UI.success("\n🎉 所有用户处理完毕！")
     UI.success("📁 所有产物路径：")
-    vfp_list.each_with_index do |_, index|
-      UI.message("   - 第 #{index + 1} 个：#{base_work_dir}/vfp_#{index + 1}/framework/HearonTestSDK.framework")
+    user_data_list.each_with_index do |user_data, index|
+      safe_name = user_data[:account_name].gsub(/[^\w]/, '_')
+      UI.message("   - 第 #{index + 1} 个 (#{user_data[:account_name]}): #{base_work_dir}/vfp_#{index + 1}_#{safe_name}/framework/HearonTestSDK.framework")
+    end
+  end
+
+  # 上传文件方法
+  def upload_file(file_path)
+    # 请替换为您的实际上传接口 URL
+    upload_url = "https://sit-soc.uim-solution.com/cvn/app/upload_file"
+    
+    uri = URI.parse(upload_url)
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = (uri.scheme == 'https')
+
+    # 创建 multipart 请求
+    boundary = "----WebKitFormBoundary#{Time.now.to_i}"
+    
+    # 构建 multipart 请求体
+    post_body = []
+    post_body << "--#{boundary}\r\n"
+    post_body << "Content-Disposition: form-data; name=\"file\"; filename=\"#{File.basename(file_path)}\"\r\n"
+    post_body << "Content-Type: application/zip\r\n\r\n"
+    post_body << File.binread(file_path)
+    post_body << "\r\n--#{boundary}--\r\n"
+    
+    request = Net::HTTP::Post.new(uri.request_uri)
+    request.body = post_body.join
+    request["Content-Type"] = "multipart/form-data; boundary=#{boundary}"
+    
+    # 添加必要的 headers（根据 curl 命令）
+    request["X-UIM-device-id"] = "1"
+    request["X-UIM-device-manufacturer"] = "1"
+    request["X-UIM-device-brand"] = "1"
+    request["X-UIM-device-model"] = "1"
+    request["X-UIM-os-type"] = "1"
+    request["X-UIM-os-version"] = "1"
+    request["X-UIM-client-id"] = "1"
+    request["X-UIM-client-version"] = "1"
+    request["X-UIM-client-code"] = "1"
+    
+    begin
+      response = http.request(request)
+      
+      if response.code == "200"
+        JSON.parse(response.body)
+      else
+        UI.error("上传接口返回错误: #{response.code} - #{response.body}")
+        nil
+      end
+    rescue => e
+      UI.error("上传请求异常: #{e.message}")
+      nil
+    end
+  end
+
+  # 保存包关系方法
+  def save_account_pkg_relation(params)
+    # 请替换为您的实际保存接口 URL
+    save_url = "https://sit-soc.uim-solution.com/cvn/app/save_account_pkg_relation"
+    
+    uri = URI.parse(save_url)
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = (uri.scheme == 'https')
+    
+    request = Net::HTTP::Post.new(uri.request_uri, 'Content-Type' => 'application/json',
+                                  'X-UIM-device-id' => '1',
+                                  'X-UIM-device-manufacturer' => '1',
+                                  'X-UIM-device-brand' => '1',
+                                  'X-UIM-device-model' => '1',
+                                  'X-UIM-os-type' => '1',
+                                  'X-UIM-os-version' => '1',
+                                  'X-UIM-client-id' => '1',
+                                  'X-UIM-client-version' => '1',
+                                  'X-UIM-client-code' => '1',
+                                  'Cookie' => '1')
+    request.body = {data: {
+      account_id: params[:account_id],
+      account_name: params[:account_name],
+      pkg_id: params[:pkg_id],
+      pkg_url: params[:pkg_url],
+      pkg_version: params[:pkg_version],
+      channel: params[:channel]
+    }, echo: "111"}.to_json
+    
+    UI.message("保存关系请求体: #{request.body}")
+
+    begin
+      response = http.request(request)
+      
+      UI.message("保存关系接口返回: #{response.code} - #{response.body}")
+
+      if response.code == "200"
+        JSON.parse(response.body)
+      else
+        UI.error("保存关系接口返回错误: #{response.code} - #{response.body}")
+        nil
+      end
+    rescue => e
+      UI.error("保存关系请求异常: #{e.message}")
+      nil
     end
   end
 end
