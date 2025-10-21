@@ -34,7 +34,7 @@ platform :ios do
     end
 
     # 基础路径（循环外定义公共根目录）
-    base_work_dir = "./build_multi_vfp"
+    base_work_dir = "./build_multi_vfp_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
     FileUtils.mkdir_p(base_work_dir)
     UI.message("📂 所有构建的根目录：#{base_work_dir}")
 
@@ -52,7 +52,7 @@ platform :ios do
       FileUtils.mkdir_p(current_work_dir)
 
       # 当前 vfp 的密钥文件路径（独立路径，避免覆盖）
-      secret_file_path = "#{current_work_dir}/SecretKey.swift"
+      secret_file_path = "../HearonTestSDK/HearonTestSDK/SecretKey.swift"
       
       # 当前 vfp 的编译输出目录
       current_build_output = "#{current_work_dir}/framework"
